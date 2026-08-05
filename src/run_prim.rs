@@ -30,6 +30,7 @@ use crate::{
     media, run_sys_op, run_sys_op_mod,
     types::{Type, validate},
     value::*,
+    volatile_read, volatile_write,
 };
 
 macro_rules! constant {
@@ -1010,6 +1011,8 @@ impl ImplPrimitive {
                 env.push(left);
             }
             ImplPrimitive::TryClose => _ = run_sys_op(&SysOp::Close, env),
+            &ImplPrimitive::VolW(width) => volatile_write(env, width)?,
+            &ImplPrimitive::VolR(width) => volatile_read(env, width)?,
             ImplPrimitive::UndoGet => {
                 let key = env.pop("key")?;
                 let val = env.pop("value")?;

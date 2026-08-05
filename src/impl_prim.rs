@@ -97,6 +97,8 @@ macro_rules! impl_primitive {
                 match self {
                     $($(ImplPrimitive::$variant => {Purity::$purity},)*)*
                     ImplPrimitive::StackN { .. } => Purity::Mutating,
+                    ImplPrimitive::VolW(_) => Purity::Mutating,
+                    ImplPrimitive::VolR(_) => Purity::Impure,
                     _ => Purity::Pure
                 }
             }
@@ -298,6 +300,8 @@ impl_primitive!(
     (3, MapArgs),
     (3, LayoutArgs),
     (2, VoxelsArgs),
+    (2(0), VolW(u8)),
+    (1, VolR(u8)),
     ([1], FoldGif),
 );
 

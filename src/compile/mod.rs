@@ -33,7 +33,7 @@ use crate::{
     IndexMacro, InputSrc, IntoInputSrc, IntoSysBackend, MvMode, Node, NumericSubscript,
     OTHER_SUBSCRIPT_NUMBERS, PrimClass, Primitive, Purity, RunMode, SUBSCRIPT_DIGITS,
     SemanticComment, SidedSubscript, SigNode, Signature, Sp, Span, SubSide, Subscript,
-    SubscriptNumber, SubscriptToken, SysBackend, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
+    SubscriptNumber, SubscriptToken, SysBackend, SysOp, Uiua, UiuaError, UiuaErrorKind, UiuaResult,
     VERSION, Value,
     algorithm::try_sig,
     ast::*,
@@ -2517,6 +2517,23 @@ impl Compiler {
                     SubSide::Right => ImplPrimitive::RightContraction,
                 };
                 Node::ImplPrim(prim, self.add_span(span))
+            }
+            Primitive::Sys(SysOp::VolR | SysOp::VolW) => {
+                let Some(n) = self.subscript_int_only(&scr, &prim.format()) else {
+                    return Ok(self.primitive(prim, span));
+                };
+                let Some(n) = u8::try_from(n).ok().filter(|&n| matches!(n, 1 | 2 | 4)) else {
+                    self.add_error(
+                        scr.span,
+                        format!("{} subscript must be 1, 2, or 4", prim.format()),
+                    );
+                    return Ok(self.primitive(prim, span));
+                };
+                let imp = match prim {
+                    Primitive::Sys(SysOp::VolW) => ImplPrimitive::VolW(n),
+                    _ => ImplPrimitive::VolR(n),
+                };
+                Node::ImplPrim(imp, self.add_span(span))
             }
             prim => {
                 let Some(n) = self.subscript_int_only(&scr, &prim.format()) else {

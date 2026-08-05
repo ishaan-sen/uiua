@@ -4478,24 +4478,30 @@ sys_op! {
     ///
     /// Use [&memfree] to free the memory when you are done with it.
     (1, Malloc, Ffi, "&malloc", "allocate memory", Mutating, { experimental: true }),
-    /// Atomically write a volatile 32-bit word to a memory address
+    /// Atomically write a volatile word to a memory address
     ///
     /// *Warning ⚠️: [&volw] can lead to undefined behavior if used incorrectly.*
     ///
-    /// Atomically writes a 32-bit word to the given memory address.
+    /// Atomically writes a word to the given memory address.
     /// The write is atomic and volatile, so it cannot be elided, merged, or reordered.
     ///
-    /// Expects an address and a value from 0 to 4294967295.
-    /// The address must be 4-byte aligned.
+    /// The word width defaults to 32 bits and can be set with a numeric subscript of `₁`, `₂`, or `₄`
+    /// to write 8, 16, or 32 bits respectively.
+    ///
+    /// Expects an address and a value from 0 to the word width's maximum.
+    /// The address must be aligned to the word width.
     (2(0), VolW, Ffi, "&volw", "volatile atomic write to memory", Mutating, { experimental: true }),
-    /// Atomically read a volatile 32-bit word from a memory address
+    /// Atomically read a volatile word from a memory address
     ///
     /// *Warning ⚠️: [&volr] can lead to undefined behavior if used incorrectly.*
     ///
-    /// Atomically reads a 32-bit word from the given memory address.
+    /// Atomically reads a word from the given memory address.
     /// The read is atomic and volatile, so it cannot be elided, merged, or reordered.
     ///
+    /// The word width defaults to 32 bits and can be set with a numeric subscript of `₁`, `₂`, or `₄`
+    /// to read 8, 16, or 32 bits respectively.
+    ///
     /// Expects an address. The read word is returned as a number.
-    /// The address must be 4-byte aligned.
+    /// The address must be aligned to the word width.
     (1, VolR, Ffi, "&volr", "volatile atomic read from memory", Mutating, { experimental: true }),
 }

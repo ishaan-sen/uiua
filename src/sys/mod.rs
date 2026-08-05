@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use portable_atomic::{self as atomic, AtomicU32};
+use portable_atomic::{self as atomic, AtomicU16, AtomicU32, AtomicU8};
 
 #[cfg(feature = "image")]
 use image::DynamicImage;
@@ -747,6 +747,82 @@ impl IntoSysBackend for Arc<dyn SysBackend> {
     }
 }
 
+/// Volatile atomic write to memory, with a width of 1, 2, or 4 octets.
+pub(crate) fn volatile_write(env: &mut Uiua, width: u8) -> UiuaResult {
+    let addr = env
+        .pop("address")?
+        .as_nat(env, "Volatile write address must be a non-negative integer")?;
+    let max = match width {
+        1 => u8::MAX as usize,
+        2 => u16::MAX as usize,
+        4 => u32::MAX as usize,
+        _ => return Err(env.error("Volatile write width must be 1, 2, or 4 octets")),
+    };
+    let value = env.pop("value")?.as_nat(
+        env,
+        "Volatile write value must be a non-negative integer that fits in the \
+        subscript-specified word size (default 4 octets)",
+    )?;
+    if value > max {
+        return Err(env.error(format!(
+            "Volatile write value must be in [0, {max}], but it is {value}"
+        )));
+    }
+    let align = match width {
+        1 => align_of::<AtomicU8>(),
+        2 => align_of::<AtomicU16>(),
+        _ => align_of::<AtomicU32>(),
+    };
+    if addr % align != 0 {
+        return Err(env.error(format!(
+            "Volatile write address must be {align}-byte aligned"
+        )));
+    }
+    // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
+    // invalid. Luckily, almost every 64-bit system uses paging schemes that
+    // limit max pointer value to (2^48)-1, which falls comfortably within the
+    // precision of the mantissa of the f64 carrying the pointer. On 32-bit
+    // systems, this isn't an issue at all, since the pointers can never
+    // exceed 32 bits and are therefore trivially fittable in an f64.
+    match width {
+        1 => unsafe { &*(addr as *const AtomicU8) }.store(value as u8, atomic::Ordering::SeqCst),
+        2 => unsafe { &*(addr as *const AtomicU16) }.store(value as u16, atomic::Ordering::SeqCst),
+        _ => unsafe { &*(addr as *const AtomicU32) }.store(value as u32, atomic::Ordering::SeqCst),
+    }
+    Ok(())
+}
+
+/// Volatile atomic read from memory, with a width of 1, 2, or 4 octets.
+pub(crate) fn volatile_read(env: &mut Uiua, width: u8) -> UiuaResult {
+    let addr = env
+        .pop("address")?
+        .as_nat(env, "Volatile read address must be a non-negative integer")?;
+    let align = match width {
+        1 => align_of::<AtomicU8>(),
+        2 => align_of::<AtomicU16>(),
+        4 => align_of::<AtomicU32>(),
+        _ => return Err(env.error("Volatile read width must be 1, 2, or 4")),
+    };
+    if addr % align != 0 {
+        return Err(env.error(format!(
+            "Volatile read address must be {align}-byte aligned"
+        )));
+    }
+    // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
+    // invalid. Luckily, almost every 64-bit system uses paging schemes that
+    // limit max pointer value to (2^48)-1, which falls comfortably within the
+    // precision of the mantissa of the f64 carrying the pointer. On 32-bit
+    // systems, this isn't an issue at all, since the pointers can never
+    // exceed 32 bits and are therefore trivially fittable in an f64.
+    let word = match width {
+        1 => unsafe { &*(addr as *const AtomicU8) }.load(atomic::Ordering::SeqCst) as f64,
+        2 => unsafe { &*(addr as *const AtomicU16) }.load(atomic::Ordering::SeqCst) as f64,
+        _ => unsafe { &*(addr as *const AtomicU32) }.load(atomic::Ordering::SeqCst) as f64,
+    };
+    env.push(word);
+    Ok(())
+}
+
 pub(crate) fn run_sys_op(op: &SysOp, env: &mut Uiua) -> UiuaResult {
     match op {
         SysOp::Show => {
@@ -1475,54 +1551,8 @@ pub(crate) fn run_sys_op(op: &SysOp, env: &mut Uiua) -> UiuaResult {
                 .map_err(|e| env.error(e))?;
             env.push(val);
         }
-        SysOp::VolW => {
-            let addr = env
-                .pop("address")?
-                .as_nat(env, "Volatile write address must be a non-negative integer")?;
-
-            let value = env.pop("value")?.as_nat(
-                env,
-                "Volatile write value must be a non-negative integer in [0, 4294967295]",
-            )?;
-            if value > u32::MAX as usize {
-                return Err(env.error(format!(
-                    "Volatile write value must be in [0, 4294967295], but it is {value}"
-                )));
-            }
-            if addr % align_of::<AtomicU32>() != 0 {
-                return Err(env.error("Volatile write address must be 4-byte aligned"));
-                // technically you can have systems where this isn't necessarily 4,
-                // which is why the actual check doesn't just blindly compare for mod 4,
-                // but having unaligned data is bad practice and typically hurts performance
-            }
-            // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
-            // invalid. Luckily, almost every 64-bit system uses paging schemes that
-            // limit max pointer value to (2^48)-1, which falls comfortably within the
-            // precision of the mantissa of the f64 carrying the pointer. On 32-bit
-            // systems, this isn't an issue at all, since the pointers can never
-            // exceed 32 bits and are therefore trivially fittable in an f64.
-            unsafe { &*(addr as *const AtomicU32) }.store(value as u32, atomic::Ordering::SeqCst);
-        }
-        SysOp::VolR => {
-            let addr = env
-                .pop("address")?
-                .as_nat(env, "Volatile read address must be a non-negative integer")?;
-
-            if addr % align_of::<AtomicU32>() != 0 {
-                return Err(env.error("Volatile write address must be 4-byte aligned"));
-                // technically you can have systems where this isn't necessarily 4,
-                // which is why the actual check doesn't just blindly compare for mod 4,
-                // but having unaligned data is bad practice and typically hurts performance
-            }
-            // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
-            // invalid. Luckily, almost every 64-bit system uses paging schemes that
-            // limit max pointer value to (2^48)-1, which falls comfortably within the
-            // precision of the mantissa of the f64 carrying the pointer. On 32-bit
-            // systems, this isn't an issue at all, since the pointers can never
-            // exceed 32 bits and are therefore trivially fittable in an f64.
-            let word = unsafe { &*(addr as *const AtomicU32) }.load(atomic::Ordering::SeqCst);
-            env.push(word as f64);
-        }
+        SysOp::VolW => volatile_write(env, 4)?, // default to 32-bit volatile r/w
+        SysOp::VolR => volatile_read(env, 4)?,  // default to 32-bit volatile r/w
         SysOp::Breakpoint => {
             if !env.rt.backend.breakpoint(env).map_err(|e| env.error(e))? {
                 return Err(UiuaErrorKind::Interrupted.into());
