@@ -6,12 +6,14 @@ use std::{
     borrow::Cow,
     fmt,
     io::stdin,
-    mem::take,
+    mem::{align_of, take},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
 };
+
+use portable_atomic::{self as atomic, AtomicU32};
 
 #[cfg(feature = "image")]
 use image::DynamicImage;
@@ -21,11 +23,10 @@ use time::UtcOffset;
 #[cfg(feature = "native_sys")]
 pub use self::native::*;
 use crate::{
-    Array, BigConstant, Boxed, FfiArg, FfiType, MetaPtr, Ops, Primitive, SysOp, Uiua,
-    UiuaErrorKind, UiuaResult, Value,
     algorithm::{multi_output, validate_size},
     cowslice::cowslice,
-    get_ops,
+    get_ops, Array, BigConstant, Boxed, FfiArg, FfiType, MetaPtr, Ops, Primitive, SysOp, Uiua,
+    UiuaErrorKind, UiuaResult, Value,
 };
 
 /// The text of Uiua's example module
@@ -1474,6 +1475,54 @@ pub(crate) fn run_sys_op(op: &SysOp, env: &mut Uiua) -> UiuaResult {
                 .map_err(|e| env.error(e))?;
             env.push(val);
         }
+        SysOp::VolW => {
+            let addr = env
+                .pop("address")?
+                .as_nat(env, "Volatile write address must be a non-negative integer")?;
+
+            let value = env.pop("value")?.as_nat(
+                env,
+                "Volatile write value must be a non-negative integer in [0, 4294967295]",
+            )?;
+            if value > u32::MAX as usize {
+                return Err(env.error(format!(
+                    "Volatile write value must be in [0, 4294967295], but it is {value}"
+                )));
+            }
+            if addr % align_of::<AtomicU32>() != 0 {
+                return Err(env.error("Volatile write address must be 4-byte aligned"));
+                // technically you can have systems where this isn't necessarily 4,
+                // which is why the actual check doesn't just blindly compare for mod 4,
+                // but having unaligned data is bad practice and typically hurts performance
+            }
+            // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
+            // invalid. Luckily, almost every 64-bit system uses paging schemes that
+            // limit max pointer value to (2^48)-1, which falls comfortably within the
+            // precision of the mantissa of the f64 carrying the pointer. On 32-bit
+            // systems, this isn't an issue at all, since the pointers can never
+            // exceed 32 bits and are therefore trivially fittable in an f64.
+            unsafe { &*(addr as *const AtomicU32) }.store(value as u32, atomic::Ordering::SeqCst);
+        }
+        SysOp::VolR => {
+            let addr = env
+                .pop("address")?
+                .as_nat(env, "Volatile read address must be a non-negative integer")?;
+
+            if addr % align_of::<AtomicU32>() != 0 {
+                return Err(env.error("Volatile write address must be 4-byte aligned"));
+                // technically you can have systems where this isn't necessarily 4,
+                // which is why the actual check doesn't just blindly compare for mod 4,
+                // but having unaligned data is bad practice and typically hurts performance
+            }
+            // SAFETY: This treats an f64's value as a pointer; values above 2^53 are
+            // invalid. Luckily, almost every 64-bit system uses paging schemes that
+            // limit max pointer value to (2^48)-1, which falls comfortably within the
+            // precision of the mantissa of the f64 carrying the pointer. On 32-bit
+            // systems, this isn't an issue at all, since the pointers can never
+            // exceed 32 bits and are therefore trivially fittable in an f64.
+            let word = unsafe { &*(addr as *const AtomicU32) }.load(atomic::Ordering::SeqCst);
+            env.push(word as f64);
+        }
         SysOp::Breakpoint => {
             if !env.rt.backend.breakpoint(env).map_err(|e| env.error(e))? {
                 return Err(UiuaErrorKind::Interrupted.into());
@@ -1683,7 +1732,7 @@ pub fn now() -> f64 {
         }
         #[cfg(feature = "web")]
         {
-            use wasm_bindgen::{JsCast, prelude::*};
+            use wasm_bindgen::{prelude::*, JsCast};
             js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("performance"))
                 .expect("failed to get performance from global object")
                 .unchecked_into::<web_sys::Performance>()
