@@ -449,7 +449,7 @@ impl Node {
             // Simple inlining
             'blk: {
                 match node {
-                    Node::Prim(Primitive::Box, _) => val.box_it(),
+                    Node::Prim(Primitive::Box, _) if !matches!(val, Value::Box(_)) => val.box_it(),
                     Node::Prim(Primitive::Fix, _) => val.fix(),
                     Node::Prim(Primitive::Len, _) => *val = val.row_count().into(),
                     Node::Prim(Primitive::Shape, _) => *val = val.shape.iter().copied().collect(),
