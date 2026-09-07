@@ -32,8 +32,8 @@ impl Type {
         let ty = if let Value::Box(arr) = val
             && arr.rank() == 1
             && let Some((first, rest)) = arr.data.split_first()
-            && let Some(mut scalar) = value_as_scalar_spec(&first.0)
         {
+            let mut scalar = value_as_scalar_spec(&first.0)?;
             if let [Boxed(arr)] = rest
                 && arr.type_id() == f64::TYPE_ID
                 && arr.shape == [0]
